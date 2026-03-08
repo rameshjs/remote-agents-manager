@@ -1,0 +1,15 @@
+{
+  "name": "api",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "lint": "echo 'no linter configured'",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.12.5"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
