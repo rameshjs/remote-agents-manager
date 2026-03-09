@@ -8,6 +8,7 @@ import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { AuthProvider } from "@/lib/auth.tsx"
 import { TooltipProvider } from "@/components/ui/tooltip.tsx"
 import { queryClient } from "@/lib/query-client.ts"
+import { ThreadTabsProvider } from "@/lib/thread-tabs.tsx"
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
@@ -15,7 +16,9 @@ createRoot(document.getElementById("root")!).render(
       <ThemeProvider>
         <AuthProvider>
           <TooltipProvider>
-            <App />
+            <ThreadTabsProvider>
+              <App />
+            </ThreadTabsProvider>
           </TooltipProvider>
         </AuthProvider>
       </ThemeProvider>

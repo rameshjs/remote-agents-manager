@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react"
+import { useState } from "react"
 import {
   SidebarGroup,
   SidebarGroupLabel,
@@ -45,8 +45,12 @@ import {
   RiGitBranchLine,
   RiAddCircleLine,
   RiArrowRightSLine,
+  RiLoader4Line,
+  RiCheckboxCircleLine,
+  RiErrorWarningLine,
 } from "@remixicon/react"
-import type { Workspace, Thread } from "@/api/workspaces"
+import type { Workspace, Thread, ThreadStatus } from "@/api/workspaces"
+import { useThreadTabs } from "@/lib/thread-tabs"
 
 export function NavWorkspaces() {
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -74,6 +78,19 @@ export function NavWorkspaces() {
   )
 }
 
+function ThreadStatusIcon({ status }: { status: ThreadStatus }) {
+  switch (status) {
+    case "running":
+      return <RiLoader4Line className="size-3.5 animate-spin text-yellow-500" />
+    case "completed":
+      return <RiCheckboxCircleLine className="size-3.5 text-green-500" />
+    case "error":
+      return <RiErrorWarningLine className="size-3.5 text-red-500" />
+    default:
+      return <RiGitBranchLine className="size-3.5" />
+  }
+}
+
 function WorkspaceItem({
   workspace: ws,
   isMobile,
@@ -93,6 +110,8 @@ function WorkspaceItem({
   const createThread = useCreateThread()
   const deleteThread = useDeleteThread()
 
+  const { openTab, activeTabId } = useThreadTabs()
+
   const [renameName, setRenameName] = useState(ws.name)
   const [threadName, setThreadName] = useState("")
 
@@ -109,9 +128,10 @@ function WorkspaceItem({
     createThread.mutate(
       { workspaceId: ws.id, name: threadName.trim() },
       {
-        onSuccess: () => {
+        onSuccess: (thread) => {
           setThreadName("")
           setNewThreadOpen(false)
+          openTab(thread)
         },
       }
     )
@@ -175,11 +195,12 @@ function WorkspaceItem({
         <SidebarMenuSub>
           {threadsList?.map((thread) => (
             <SidebarMenuSubItem key={thread.id} className="group/thread relative">
-              <SidebarMenuSubButton asChild>
-                <a href={`#thread-${thread.id}`}>
-                  <RiGitBranchLine className="size-3.5" />
-                  <span className="truncate pr-6">{thread.name}</span>
-                </a>
+              <SidebarMenuSubButton
+                onClick={() => openTab(thread)}
+                data-active={thread.id === activeTabId || undefined}
+              >
+                <ThreadStatusIcon status={thread.status} />
+                <span className="truncate pr-6">{thread.name}</span>
               </SidebarMenuSubButton>
               <button
                 className="absolute right-1 top-1/2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-destructive group-hover/thread:opacity-100"

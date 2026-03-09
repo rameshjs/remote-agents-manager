@@ -35,6 +35,9 @@ export const threads = sqliteTable('threads', {
   name: text('name').notNull(),
   branchName: text('branch_name').notNull(),
   worktreePath: text('worktree_path').notNull(),
+  status: text('status', { enum: ['idle', 'running', 'completed', 'error'] })
+    .notNull()
+    .default('idle'),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .$defaultFn(() => new Date()),

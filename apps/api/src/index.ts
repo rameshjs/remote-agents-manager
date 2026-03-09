@@ -8,6 +8,7 @@ import { agents, settings, users, workspaces, threads } from './db/schema'
 import { eq } from 'drizzle-orm'
 import { resolve } from 'path'
 import { mkdir, readdir, rm } from 'fs/promises'
+import type { Subprocess } from 'bun'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-change-me'
 const WORKDIR = resolve(process.cwd(), '../../.workdir/repos')
@@ -217,10 +218,10 @@ app.delete('/workspaces/:id', async (c) => {
   // Get all threads for this workspace to clean up worktrees
   const wsThreads = c.var.db.select().from(threads).where(eq(threads.workspaceId, id)).all()
 
-  // Remove worktree directories and prune from git
+  // Remove tmux sessions, worktree directories, and prune from git
   for (const thread of wsThreads) {
+    killTmuxSession(thread.id)
     try {
-      // Find the workspace to get the repo path
       const ws = c.var.db.select().from(workspaces).where(eq(workspaces.id, id)).get()
       if (ws) {
         await Bun.spawn(['git', 'worktree', 'remove', '--force', thread.worktreePath], {
@@ -230,7 +231,6 @@ app.delete('/workspaces/:id', async (c) => {
         }).exited
       }
     } catch {
-      // If git worktree remove fails, try to delete the directory directly
       try {
         await rm(thread.worktreePath, { recursive: true, force: true })
       } catch {
@@ -306,7 +306,8 @@ app.delete('/workspaces/:wsId/threads/:threadId', async (c) => {
 
   const ws = c.var.db.select().from(workspaces).where(eq(workspaces.id, wsId)).get()
 
-  // Remove git worktree
+  // Kill tmux session and remove git worktree
+  killTmuxSession(threadId)
   if (ws) {
     try {
       await Bun.spawn(['git', 'worktree', 'remove', '--force', thread.worktreePath], {
@@ -326,6 +327,196 @@ app.delete('/workspaces/:wsId/threads/:threadId', async (c) => {
   c.var.db.delete(threads).where(eq(threads.id, threadId)).run()
   return c.json({ ok: true })
 })
+
+// --- Thread status route ---
+
+app.get('/workspaces/:wsId/threads/:threadId/status', (c) => {
+  const threadId = Number(c.req.param('threadId'))
+  const thread = c.var.db.select().from(threads).where(eq(threads.id, threadId)).get()
+  if (!thread) return c.json({ error: 'Thread not found' }, 404)
+  return c.json({ status: thread.status })
+})
+
+// --- tmux-based terminal sessions ---
+// tmux sessions persist independently of this process, surviving server restarts.
+// Each thread can have multiple terminals, each backed by its own tmux session.
+
+const TMUX_PREFIX = 'ram-'
+
+function tmuxSessionName(threadId: number, terminalId: number) {
+  return `${TMUX_PREFIX}${threadId}-${terminalId}`
+}
+
+function ensureTmuxSession(threadId: number, terminalId: number, worktreePath: string) {
+  const name = tmuxSessionName(threadId, terminalId)
+  const check = Bun.spawnSync(['tmux', 'has-session', '-t', name], {
+    stdout: 'ignore',
+    stderr: 'ignore',
+  })
+  if (check.exitCode === 0) return // session already exists
+
+  const result = Bun.spawnSync(
+    ['tmux', 'new-session', '-d', '-s', name, '-c', worktreePath, '-x', '80', '-y', '24'],
+    { stderr: 'pipe' }
+  )
+  if (result.exitCode !== 0) {
+    throw new Error(`tmux new-session failed: ${result.stderr.toString()}`)
+  }
+
+  // Enable mouse scrolling and set scrollback buffer
+  Bun.spawnSync(['tmux', 'set-option', '-t', name, 'mouse', 'on'], {
+    stdout: 'ignore',
+    stderr: 'ignore',
+  })
+  Bun.spawnSync(['tmux', 'set-option', '-t', name, 'history-limit', '10000'], {
+    stdout: 'ignore',
+    stderr: 'ignore',
+  })
+}
+
+function killTmuxSession(threadId: number, terminalId?: number) {
+  if (terminalId !== undefined) {
+    Bun.spawnSync(['tmux', 'kill-session', '-t', tmuxSessionName(threadId, terminalId)], {
+      stdout: 'ignore',
+      stderr: 'ignore',
+    })
+  } else {
+    // Kill all tmux sessions for this thread
+    const result = Bun.spawnSync(['tmux', 'list-sessions', '-F', '#{session_name}'], {
+      stdout: 'pipe',
+      stderr: 'ignore',
+    })
+    if (result.exitCode === 0) {
+      const prefix = `${TMUX_PREFIX}${threadId}-`
+      const sessions = result.stdout.toString().split('\n').filter((s) => s.startsWith(prefix))
+      for (const s of sessions) {
+        Bun.spawnSync(['tmux', 'kill-session', '-t', s], {
+          stdout: 'ignore',
+          stderr: 'ignore',
+        })
+      }
+    }
+  }
+}
+
+// Active tmux attach processes — keyed by "threadId-terminalId"
+const attachments = new Map<
+  string,
+  { proc: Subprocess; ws: { send: (data: string) => void } | null }
+>()
+
+app.get(
+  '/ws/terminal/:threadId/:terminalId',
+  upgradeWebSocket((c) => {
+    const threadId = Number(c.req.param('threadId'))
+    const terminalId = Number(c.req.param('terminalId'))
+    const attachKey = `${threadId}-${terminalId}`
+
+    return {
+      onOpen(_event, ws) {
+        const thread = db.select().from(threads).where(eq(threads.id, threadId)).get()
+        if (!thread) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Thread not found' }))
+          ws.close()
+          return
+        }
+
+        // Kill previous attach process if any (session stays alive)
+        const prev = attachments.get(attachKey)
+        if (prev) {
+          prev.ws = null
+          prev.proc.kill()
+          attachments.delete(attachKey)
+        }
+
+        try {
+          ensureTmuxSession(threadId, terminalId, thread.worktreePath)
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Failed to create tmux session'
+          ws.send(JSON.stringify({ type: 'error', message: msg }))
+          ws.close()
+          return
+        }
+
+        const sessionName = tmuxSessionName(threadId, terminalId)
+        const attachment = { proc: null as any as Subprocess, ws: ws as any }
+
+        const proc = Bun.spawn(['tmux', 'attach', '-t', sessionName], {
+          env: { ...process.env, TERM: 'xterm-256color' },
+          terminal: {
+            cols: 80,
+            rows: 24,
+            data(_terminal: any, data: any) {
+              const str = data.toString()
+              if (attachment.ws) {
+                try {
+                  attachment.ws.send(JSON.stringify({ type: 'output', data: str }))
+                } catch {
+                  // WebSocket might be closed
+                }
+              }
+            },
+          },
+        })
+
+        attachment.proc = proc
+        attachments.set(attachKey, attachment)
+
+        // When the attach process exits, the tmux session may have ended (shell exited)
+        proc.exited.then((code) => {
+          attachments.delete(attachKey)
+
+          // Check if the tmux session is actually gone (shell exited vs detached)
+          const still = Bun.spawnSync(['tmux', 'has-session', '-t', sessionName], {
+            stdout: 'ignore',
+            stderr: 'ignore',
+          })
+          if (still.exitCode !== 0) {
+            if (attachment.ws) {
+              try {
+                attachment.ws.send(JSON.stringify({ type: 'exit', code }))
+              } catch {
+                // ignore
+              }
+            }
+          }
+        })
+
+        ws.send(JSON.stringify({ type: 'connected', threadId, terminalId }))
+      },
+
+      onMessage(event, _ws) {
+        const attachment = attachments.get(attachKey)
+        if (!attachment?.proc?.terminal) return
+
+        try {
+          const msg = JSON.parse(event.data as string)
+
+          if (msg.type === 'input') {
+            attachment.proc.terminal.write(msg.data)
+          } else if (msg.type === 'resize') {
+            attachment.proc.terminal.resize(msg.cols, msg.rows)
+          }
+        } catch {
+          // If not JSON, treat as raw input
+          if (typeof event.data === 'string') {
+            attachment.proc.terminal.write(event.data)
+          }
+        }
+      },
+
+      onClose() {
+        // Kill the attach process — tmux session stays alive
+        const attachment = attachments.get(attachKey)
+        if (attachment) {
+          attachment.ws = null
+          attachment.proc.kill()
+          attachments.delete(attachKey)
+        }
+      },
+    }
+  })
+)
 
 // --- WebSocket: Clone repo ---
 

@@ -7,12 +7,15 @@ export interface Workspace {
   createdAt: string
 }
 
+export type ThreadStatus = "idle" | "running" | "completed" | "error"
+
 export interface Thread {
   id: number
   workspaceId: number
   name: string
   branchName: string
   worktreePath: string
+  status: ThreadStatus
   createdAt: string
 }
 
