@@ -4,13 +4,14 @@ import { cors } from 'hono/cors'
 import { upgradeWebSocket, websocket } from 'hono/bun'
 import { db } from './db'
 import type { Database } from './db'
-import { agents, settings, users, workspaces } from './db/schema'
+import { agents, settings, users, workspaces, threads } from './db/schema'
 import { eq } from 'drizzle-orm'
 import { resolve } from 'path'
-import { mkdir, readdir, stat } from 'fs/promises'
+import { mkdir, readdir, rm } from 'fs/promises'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-change-me'
 const WORKDIR = resolve(process.cwd(), '../../.workdir/repos')
+const WORKTREES_DIR = resolve(process.cwd(), '../../.workdir/worktrees')
 
 type Env = {
   Variables: {
@@ -191,17 +192,138 @@ app.post('/workspaces', async (c) => {
   if (!name || !repoPath) {
     return c.json({ error: 'name and repoPath are required' }, 400)
   }
-  const existing = c.var.db.select().from(workspaces).where(eq(workspaces.name, name)).get()
-  if (existing) {
-    return c.json({ error: 'Workspace with this name already exists' }, 409)
-  }
   const result = c.var.db.insert(workspaces).values({ name, repoPath }).returning().all()
   return c.json(result[0], 201)
 })
 
-app.delete('/workspaces/:id', (c) => {
+app.patch('/workspaces/:id', async (c) => {
   const id = Number(c.req.param('id'))
+  const { name } = await c.req.json<{ name: string }>()
+  if (!name) {
+    return c.json({ error: 'name is required' }, 400)
+  }
+  const existing = c.var.db.select().from(workspaces).where(eq(workspaces.id, id)).get()
+  if (!existing) {
+    return c.json({ error: 'Workspace not found' }, 404)
+  }
+  c.var.db.update(workspaces).set({ name }).where(eq(workspaces.id, id)).run()
+  const updated = c.var.db.select().from(workspaces).where(eq(workspaces.id, id)).get()
+  return c.json(updated)
+})
+
+app.delete('/workspaces/:id', async (c) => {
+  const id = Number(c.req.param('id'))
+
+  // Get all threads for this workspace to clean up worktrees
+  const wsThreads = c.var.db.select().from(threads).where(eq(threads.workspaceId, id)).all()
+
+  // Remove worktree directories and prune from git
+  for (const thread of wsThreads) {
+    try {
+      // Find the workspace to get the repo path
+      const ws = c.var.db.select().from(workspaces).where(eq(workspaces.id, id)).get()
+      if (ws) {
+        await Bun.spawn(['git', 'worktree', 'remove', '--force', thread.worktreePath], {
+          cwd: ws.repoPath,
+          stdout: 'ignore',
+          stderr: 'ignore',
+        }).exited
+      }
+    } catch {
+      // If git worktree remove fails, try to delete the directory directly
+      try {
+        await rm(thread.worktreePath, { recursive: true, force: true })
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+  }
+
+  // Delete threads (cascade should handle this, but be explicit)
+  c.var.db.delete(threads).where(eq(threads.workspaceId, id)).run()
   c.var.db.delete(workspaces).where(eq(workspaces.id, id)).run()
+  return c.json({ ok: true })
+})
+
+// --- Threads routes (worktrees per workspace) ---
+
+app.get('/workspaces/:id/threads', (c) => {
+  const workspaceId = Number(c.req.param('id'))
+  const result = c.var.db.select().from(threads).where(eq(threads.workspaceId, workspaceId)).all()
+  return c.json(result)
+})
+
+app.post('/workspaces/:id/threads', async (c) => {
+  const workspaceId = Number(c.req.param('id'))
+  const { name } = await c.req.json<{ name: string }>()
+
+  if (!name) {
+    return c.json({ error: 'name is required' }, 400)
+  }
+
+  const ws = c.var.db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).get()
+  if (!ws) {
+    return c.json({ error: 'Workspace not found' }, 404)
+  }
+
+  // Create a branch name from the thread name
+  const branchName = `thread/${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${Date.now()}`
+
+  // Create worktree directory
+  await mkdir(WORKTREES_DIR, { recursive: true })
+  const worktreePath = resolve(WORKTREES_DIR, `${workspaceId}-${branchName.replace(/\//g, '-')}`)
+
+  // Create git worktree
+  const proc = Bun.spawn(['git', 'worktree', 'add', '-b', branchName, worktreePath], {
+    cwd: ws.repoPath,
+    stderr: 'pipe',
+    stdout: 'pipe',
+  })
+
+  const exitCode = await proc.exited
+  if (exitCode !== 0) {
+    const stderr = await new Response(proc.stderr).text()
+    return c.json({ error: `Failed to create worktree: ${stderr}` }, 500)
+  }
+
+  const result = c.var.db
+    .insert(threads)
+    .values({ workspaceId, name, branchName, worktreePath })
+    .returning()
+    .all()
+
+  return c.json(result[0], 201)
+})
+
+app.delete('/workspaces/:wsId/threads/:threadId', async (c) => {
+  const wsId = Number(c.req.param('wsId'))
+  const threadId = Number(c.req.param('threadId'))
+
+  const thread = c.var.db.select().from(threads).where(eq(threads.id, threadId)).get()
+  if (!thread || thread.workspaceId !== wsId) {
+    return c.json({ error: 'Thread not found' }, 404)
+  }
+
+  const ws = c.var.db.select().from(workspaces).where(eq(workspaces.id, wsId)).get()
+
+  // Remove git worktree
+  if (ws) {
+    try {
+      await Bun.spawn(['git', 'worktree', 'remove', '--force', thread.worktreePath], {
+        cwd: ws.repoPath,
+        stdout: 'ignore',
+        stderr: 'ignore',
+      }).exited
+    } catch {
+      try {
+        await rm(thread.worktreePath, { recursive: true, force: true })
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  c.var.db.delete(threads).where(eq(threads.id, threadId)).run()
   return c.json({ ok: true })
 })
 

@@ -80,9 +80,7 @@ export function NewProjectDialog({
 
           {createWorkspace.isError && (
             <p className="mt-2 text-sm text-destructive">
-              {(createWorkspace.error as Error)?.message?.includes("409")
-                ? "A workspace with this name already exists."
-                : "Failed to create workspace."}
+              Failed to create workspace.
             </p>
           )}
         </div>
