@@ -15,9 +15,9 @@ export default function Layout() {
       }
     >
       <AppSidebar variant="inset" />
-      <SidebarInset>
+      <SidebarInset className="overflow-hidden">
         <SiteHeader />
-        <div className="flex flex-1 flex-col">
+        <div className="flex flex-1 flex-col overflow-auto">
           <Outlet />
         </div>
       </SidebarInset>
