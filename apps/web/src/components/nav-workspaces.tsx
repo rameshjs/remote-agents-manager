@@ -35,6 +35,7 @@ import {
   useThreads,
   useCreateThread,
   useDeleteThread,
+  usePullWorkspace,
 } from "@/hooks/use-workspaces"
 import {
   RiAddLine,
@@ -48,6 +49,7 @@ import {
   RiLoader4Line,
   RiCheckboxCircleLine,
   RiErrorWarningLine,
+  RiDownloadLine,
 } from "@remixicon/react"
 import type { Workspace, Thread, ThreadStatus } from "@/api/workspaces"
 import { useThreadTabs } from "@/lib/thread-tabs"
@@ -106,6 +108,7 @@ function WorkspaceItem({
 
   const deleteWorkspace = useDeleteWorkspace()
   const updateWorkspace = useUpdateWorkspace()
+  const pullWorkspace = usePullWorkspace()
   const { data: threadsList } = useThreads(expanded ? ws.id : null)
   const createThread = useCreateThread()
   const deleteThread = useDeleteThread()
@@ -162,6 +165,13 @@ function WorkspaceItem({
           side={isMobile ? "bottom" : "right"}
           align={isMobile ? "end" : "start"}
         >
+          <DropdownMenuItem
+            onClick={() => pullWorkspace.mutate(ws.id)}
+            disabled={pullWorkspace.isPending}
+          >
+            <RiDownloadLine />
+            <span>{pullWorkspace.isPending ? "Pulling..." : "Fetch Latest"}</span>
+          </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => {
               setExpanded(true)

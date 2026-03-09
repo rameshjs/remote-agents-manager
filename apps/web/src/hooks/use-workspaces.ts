@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { workspacesApi, type CreateWorkspacePayload } from "@/api/workspaces"
+import { workspacesApi, type CreateWorkspacePayload, type FileNode } from "@/api/workspaces"
 
 export function useWorkspaces() {
   return useQuery({
@@ -59,5 +59,39 @@ export function useDeleteThread() {
       workspacesApi.deleteThread(workspaceId, threadId),
     onSuccess: (_data, vars) =>
       qc.invalidateQueries({ queryKey: ["threads", vars.workspaceId] }),
+  })
+}
+
+export function usePullWorkspace() {
+  return useMutation({
+    mutationFn: (workspaceId: number) => workspacesApi.pull(workspaceId),
+  })
+}
+
+export function useThreadDiff(workspaceId: number | null, threadId: number | null) {
+  return useQuery({
+    queryKey: ["thread-diff", workspaceId, threadId],
+    queryFn: () => workspacesApi.threadDiff(workspaceId!, threadId!),
+    enabled: workspaceId !== null && threadId !== null,
+  })
+}
+
+export function useThreadFiles(workspaceId: number | null, threadId: number | null) {
+  return useQuery({
+    queryKey: ["thread-files", workspaceId, threadId],
+    queryFn: () => workspacesApi.threadFiles(workspaceId!, threadId!),
+    enabled: workspaceId !== null && threadId !== null,
+  })
+}
+
+export function useThreadFileContent(
+  workspaceId: number | null,
+  threadId: number | null,
+  path: string | null
+) {
+  return useQuery({
+    queryKey: ["thread-file-content", workspaceId, threadId, path],
+    queryFn: () => workspacesApi.threadFileContent(workspaceId!, threadId!, path!),
+    enabled: workspaceId !== null && threadId !== null && path !== null,
   })
 }

@@ -7,7 +7,7 @@ import type { Database } from './db'
 import { agents, settings, users, workspaces, threads } from './db/schema'
 import { eq } from 'drizzle-orm'
 import { resolve } from 'path'
-import { mkdir, readdir, rm } from 'fs/promises'
+import { mkdir, readdir, readFile, rm, stat } from 'fs/promises'
 import type { Subprocess } from 'bun'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-change-me'
@@ -335,6 +335,158 @@ app.get('/workspaces/:wsId/threads/:threadId/status', (c) => {
   const thread = c.var.db.select().from(threads).where(eq(threads.id, threadId)).get()
   if (!thread) return c.json({ error: 'Thread not found' }, 404)
   return c.json({ status: thread.status })
+})
+
+// --- Git pull (fetch latest) for workspace ---
+
+app.post('/workspaces/:id/pull', async (c) => {
+  const id = Number(c.req.param('id'))
+  const ws = c.var.db.select().from(workspaces).where(eq(workspaces.id, id)).get()
+  if (!ws) return c.json({ error: 'Workspace not found' }, 404)
+
+  const proc = Bun.spawn(['git', 'pull', '--ff-only'], {
+    cwd: ws.repoPath,
+    stderr: 'pipe',
+    stdout: 'pipe',
+  })
+
+  const exitCode = await proc.exited
+  const stdout = await new Response(proc.stdout).text()
+  const stderr = await new Response(proc.stderr).text()
+
+  if (exitCode !== 0) {
+    return c.json({ error: `Git pull failed: ${stderr}` }, 500)
+  }
+
+  return c.json({ ok: true, message: stdout.trim() || 'Already up to date.' })
+})
+
+// --- Git diff for a thread worktree ---
+
+app.get('/workspaces/:wsId/threads/:threadId/diff', async (c) => {
+  const threadId = Number(c.req.param('threadId'))
+  const thread = c.var.db.select().from(threads).where(eq(threads.id, threadId)).get()
+  if (!thread) return c.json({ error: 'Thread not found' }, 404)
+
+  const diffProc = Bun.spawn(['git', 'diff', 'HEAD'], {
+    cwd: thread.worktreePath,
+    stderr: 'pipe',
+    stdout: 'pipe',
+  })
+  const diffCode = await diffProc.exited
+  let diff = await new Response(diffProc.stdout).text()
+
+  const statusProc = Bun.spawn(['git', 'status', '--porcelain'], {
+    cwd: thread.worktreePath,
+    stderr: 'pipe',
+    stdout: 'pipe',
+  })
+  await statusProc.exited
+  const status = await new Response(statusProc.stdout).text()
+
+  // Generate diffs for untracked files so they show content in the UI
+  const untrackedFiles = status
+    .split('\n')
+    .filter((line) => line.startsWith('??'))
+    .map((line) => line.substring(3).trim())
+
+  for (const filePath of untrackedFiles) {
+    try {
+      const absolute = resolve(thread.worktreePath, filePath)
+      if (!absolute.startsWith(thread.worktreePath)) continue
+      const info = await stat(absolute)
+      if (!info.isFile() || info.size > 256 * 1024) continue
+
+      const content = await readFile(absolute, 'utf-8')
+      const lines = content.split('\n')
+      const header = [
+        `diff --git a/${filePath} b/${filePath}`,
+        'new file mode 100644',
+        '--- /dev/null',
+        `+++ b/${filePath}`,
+        `@@ -0,0 +1,${lines.length} @@`,
+      ].join('\n')
+      const body = lines.map((l) => `+${l}`).join('\n')
+      diff += `\n${header}\n${body}\n`
+    } catch {
+      // skip files that can't be read
+    }
+  }
+
+  return c.json({ diff, status, exitCode: diffCode })
+})
+
+// --- File tree for a thread worktree ---
+
+interface FileNode {
+  name: string
+  path: string
+  type: 'file' | 'directory'
+  children?: FileNode[]
+}
+
+async function buildFileTree(dir: string, prefix = ''): Promise<FileNode[]> {
+  const entries = await readdir(dir, { withFileTypes: true })
+  const nodes: FileNode[] = []
+
+  for (const entry of entries) {
+    if (entry.name.startsWith('.git') || entry.name === 'node_modules') continue
+    const fullPath = prefix ? `${prefix}/${entry.name}` : entry.name
+
+    if (entry.isDirectory()) {
+      const children = await buildFileTree(resolve(dir, entry.name), fullPath)
+      nodes.push({ name: entry.name, path: fullPath, type: 'directory', children })
+    } else {
+      nodes.push({ name: entry.name, path: fullPath, type: 'file' })
+    }
+  }
+
+  return nodes.sort((a, b) => {
+    if (a.type === b.type) return a.name.localeCompare(b.name)
+    return a.type === 'directory' ? -1 : 1
+  })
+}
+
+app.get('/workspaces/:wsId/threads/:threadId/files', async (c) => {
+  const threadId = Number(c.req.param('threadId'))
+  const thread = c.var.db.select().from(threads).where(eq(threads.id, threadId)).get()
+  if (!thread) return c.json({ error: 'Thread not found' }, 404)
+
+  try {
+    const files = await buildFileTree(thread.worktreePath)
+    return c.json({ files, worktreePath: thread.worktreePath })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to read file tree'
+    return c.json({ error: message }, 500)
+  }
+})
+
+// --- Read file content from a thread worktree ---
+
+app.get('/workspaces/:wsId/threads/:threadId/file', async (c) => {
+  const threadId = Number(c.req.param('threadId'))
+  const filePath = c.req.query('path')
+  if (!filePath) return c.json({ error: 'path query param is required' }, 400)
+
+  const thread = c.var.db.select().from(threads).where(eq(threads.id, threadId)).get()
+  if (!thread) return c.json({ error: 'Thread not found' }, 404)
+
+  // Prevent path traversal
+  const absolute = resolve(thread.worktreePath, filePath)
+  if (!absolute.startsWith(thread.worktreePath)) {
+    return c.json({ error: 'Invalid path' }, 400)
+  }
+
+  try {
+    const info = await stat(absolute)
+    if (!info.isFile()) return c.json({ error: 'Not a file' }, 400)
+    if (info.size > 512 * 1024) return c.json({ error: 'File too large (max 512KB)' }, 400)
+
+    const content = await readFile(absolute, 'utf-8')
+    return c.json({ content, path: filePath })
+  } catch {
+    return c.json({ error: 'File not found' }, 404)
+  }
 })
 
 // --- tmux-based terminal sessions ---
