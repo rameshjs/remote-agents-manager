@@ -1,12 +1,16 @@
 import { Hono } from 'hono'
 import { jwt, sign } from 'hono/jwt'
 import { cors } from 'hono/cors'
+import { upgradeWebSocket, websocket } from 'hono/bun'
 import { db } from './db'
 import type { Database } from './db'
-import { agents, users } from './db/schema'
+import { agents, settings, users } from './db/schema'
 import { eq } from 'drizzle-orm'
+import { resolve } from 'path'
+import { mkdir } from 'fs/promises'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-change-me'
+const WORKDIR = resolve(process.cwd(), '../../.workdir/repos')
 
 type Env = {
   Variables: {
@@ -71,6 +75,10 @@ app.use(
   '/me',
   jwt({ secret: JWT_SECRET, alg: 'HS256' })
 )
+app.use(
+  '/settings/*',
+  jwt({ secret: JWT_SECRET, alg: 'HS256' })
+)
 
 app.get('/me', (c) => {
   const payload = c.get('jwtPayload')
@@ -80,6 +88,47 @@ app.get('/me', (c) => {
 app.get('/', (c) => {
   return c.text('Hello Hono!')
 })
+
+// --- Settings routes ---
+
+app.get('/settings/:key', (c) => {
+  const key = c.req.param('key')
+  const result = c.var.db
+    .select()
+    .from(settings)
+    .where(eq(settings.key, key))
+    .get()
+  if (!result) return c.json({ key, value: null })
+  return c.json({ key: result.key, value: result.value })
+})
+
+app.put('/settings/:key', async (c) => {
+  const key = c.req.param('key')
+  const { value } = await c.req.json<{ value: string }>()
+
+  const existing = c.var.db
+    .select()
+    .from(settings)
+    .where(eq(settings.key, key))
+    .get()
+
+  if (existing) {
+    c.var.db
+      .update(settings)
+      .set({ value, updatedAt: new Date() })
+      .where(eq(settings.key, key))
+      .run()
+  } else {
+    c.var.db
+      .insert(settings)
+      .values({ key, value })
+      .run()
+  }
+
+  return c.json({ key, value })
+})
+
+// --- Agents routes ---
 
 app.get('/agents', (c) => {
   const result = c.var.db.select().from(agents).all()
@@ -103,4 +152,113 @@ app.get('/agents/:id', (c) => {
   return c.json(result)
 })
 
-export default app
+// --- WebSocket: Clone repo ---
+
+app.get(
+  '/ws/clone',
+  upgradeWebSocket(() => {
+    return {
+      async onMessage(event, ws) {
+        try {
+          const data = JSON.parse(event.data as string)
+          const { repoUrl, token } = data as { repoUrl: string; token?: string }
+
+          if (!repoUrl) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Repository URL is required' }))
+            return
+          }
+
+          // Validate URL format
+          let cloneUrl = repoUrl.trim()
+          if (!/^https?:\/\/.+/.test(cloneUrl) && !/^git@.+/.test(cloneUrl)) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Invalid repository URL' }))
+            return
+          }
+
+          // If PAT token provided, inject into HTTPS URL
+          if (token && cloneUrl.startsWith('https://')) {
+            const url = new URL(cloneUrl)
+            url.username = token
+            cloneUrl = url.toString()
+          }
+
+          // Extract repo name from URL
+          const repoName = cloneUrl
+            .replace(/\.git$/, '')
+            .split('/')
+            .pop() || 'repo'
+
+          const targetDir = resolve(WORKDIR, repoName)
+
+          // Ensure .workdir/repos exists
+          await mkdir(WORKDIR, { recursive: true })
+
+          ws.send(JSON.stringify({ type: 'log', message: `Cloning into ${repoName}...` }))
+
+          const proc = Bun.spawn(['git', 'clone', '--progress', cloneUrl, targetDir], {
+            stderr: 'pipe',
+            stdout: 'pipe',
+          })
+
+          // Stream stderr (git clone outputs progress to stderr)
+          const stderrReader = proc.stderr.getReader()
+          const decoder = new TextDecoder()
+
+          const readStream = async () => {
+            while (true) {
+              const { done, value } = await stderrReader.read()
+              if (done) break
+              const text = decoder.decode(value, { stream: true })
+              const lines = text.split(/\r?\n|\r/).filter(Boolean)
+              for (const line of lines) {
+                ws.send(JSON.stringify({ type: 'log', message: line }))
+              }
+            }
+          }
+
+          // Also read stdout
+          const stdoutReader = proc.stdout.getReader()
+          const readStdout = async () => {
+            while (true) {
+              const { done, value } = await stdoutReader.read()
+              if (done) break
+              const text = decoder.decode(value, { stream: true })
+              const lines = text.split(/\r?\n|\r/).filter(Boolean)
+              for (const line of lines) {
+                ws.send(JSON.stringify({ type: 'log', message: line }))
+              }
+            }
+          }
+
+          await Promise.all([readStream(), readStdout()])
+          const exitCode = await proc.exited
+
+          if (exitCode === 0) {
+            ws.send(JSON.stringify({
+              type: 'complete',
+              message: `Repository cloned successfully to ${repoName}`,
+              repoName,
+              path: targetDir,
+            }))
+          } else {
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: `Clone failed with exit code ${exitCode}`,
+            }))
+          }
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Unknown error'
+          ws.send(JSON.stringify({ type: 'error', message }))
+        }
+      },
+      onClose() {
+        console.log('Clone WebSocket closed')
+      },
+    }
+  })
+)
+
+export default {
+  fetch: app.fetch,
+  websocket,
+}

@@ -36,6 +36,9 @@ yarn-error.log*
 # Database
 *.db
 
+# Working directory
+.workdir
+
 # Misc
 .DS_Store
 *.pem

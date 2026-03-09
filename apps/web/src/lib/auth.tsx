@@ -5,8 +5,8 @@ import {
   useCallback,
   type ReactNode,
 } from "react"
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000"
+import { authApi } from "@/api/auth"
+import { queryClient } from "@/lib/query-client"
 
 interface AuthContextType {
   token: string | null
@@ -19,29 +19,19 @@ const AuthContext = createContext<AuthContextType | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() =>
-    localStorage.getItem("token")
+    localStorage.getItem("token"),
   )
 
   const login = useCallback(async (email: string, password: string) => {
-    const res = await fetch(`${API_URL}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    })
-
-    if (!res.ok) {
-      const data = await res.json()
-      throw new Error(data.error || "Login failed")
-    }
-
-    const { token } = await res.json()
-    localStorage.setItem("token", token)
-    setToken(token)
+    const data = await authApi.login({ email, password })
+    localStorage.setItem("token", data.token)
+    setToken(data.token)
   }, [])
 
   const logout = useCallback(() => {
     localStorage.removeItem("token")
     setToken(null)
+    queryClient.clear()
   }, [])
 
   return (
