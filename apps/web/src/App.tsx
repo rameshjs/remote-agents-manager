@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router"
 import { useAuth } from "@/lib/auth"
 import LoginPage from "@/pages/login"
 import DashboardPage from "@/pages/dashboard"
+import Layout from "@/components/layout"
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth()
@@ -28,13 +29,14 @@ export default function App() {
           }
         />
         <Route
-          path="/"
           element={
             <ProtectedRoute>
-              <DashboardPage />
+              <Layout />
             </ProtectedRoute>
           }
-        />
+        >
+          <Route index element={<DashboardPage />} />
+        </Route>
       </Routes>
     </BrowserRouter>
   )
