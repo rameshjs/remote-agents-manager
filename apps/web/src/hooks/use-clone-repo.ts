@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from "react"
 import useWebSocket from "react-use-websocket"
+import { useQueryClient } from "@tanstack/react-query"
 import { getWsUrl } from "@/lib/ws"
 
 export type CloneLog = {
@@ -12,6 +13,7 @@ export type CloneLog = {
 export type CloneStatus = "idle" | "cloning" | "complete" | "error"
 
 export function useCloneRepo() {
+  const queryClient = useQueryClient()
   const [logs, setLogs] = useState<CloneLog[]>([])
   const [status, setStatus] = useState<CloneStatus>("idle")
   const [shouldConnect, setShouldConnect] = useState(false)
@@ -35,6 +37,7 @@ export function useCloneRepo() {
         if (data.type === "complete") {
           setStatus("complete")
           setShouldConnect(false)
+          queryClient.invalidateQueries({ queryKey: ["projects"] })
         } else if (data.type === "error") {
           setStatus("error")
         }

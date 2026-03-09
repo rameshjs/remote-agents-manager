@@ -4,10 +4,10 @@ import { cors } from 'hono/cors'
 import { upgradeWebSocket, websocket } from 'hono/bun'
 import { db } from './db'
 import type { Database } from './db'
-import { agents, settings, users } from './db/schema'
+import { agents, settings, users, workspaces } from './db/schema'
 import { eq } from 'drizzle-orm'
 import { resolve } from 'path'
-import { mkdir } from 'fs/promises'
+import { mkdir, readdir, stat } from 'fs/promises'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-change-me'
 const WORKDIR = resolve(process.cwd(), '../../.workdir/repos')
@@ -77,6 +77,18 @@ app.use(
 )
 app.use(
   '/settings/*',
+  jwt({ secret: JWT_SECRET, alg: 'HS256' })
+)
+app.use(
+  '/projects',
+  jwt({ secret: JWT_SECRET, alg: 'HS256' })
+)
+app.use(
+  '/workspaces/*',
+  jwt({ secret: JWT_SECRET, alg: 'HS256' })
+)
+app.use(
+  '/workspaces',
   jwt({ secret: JWT_SECRET, alg: 'HS256' })
 )
 
@@ -150,6 +162,47 @@ app.get('/agents/:id', (c) => {
     .get()
   if (!result) return c.json({ error: 'Agent not found' }, 404)
   return c.json(result)
+})
+
+// --- Projects routes (list repos in .workdir/repos) ---
+
+app.get('/projects', async (c) => {
+  try {
+    await mkdir(WORKDIR, { recursive: true })
+    const entries = await readdir(WORKDIR, { withFileTypes: true })
+    const projects = entries
+      .filter((e) => e.isDirectory())
+      .map((e) => ({ name: e.name, path: resolve(WORKDIR, e.name) }))
+    return c.json(projects)
+  } catch {
+    return c.json([])
+  }
+})
+
+// --- Workspaces routes ---
+
+app.get('/workspaces', (c) => {
+  const result = c.var.db.select().from(workspaces).all()
+  return c.json(result)
+})
+
+app.post('/workspaces', async (c) => {
+  const { name, repoPath } = await c.req.json<{ name: string; repoPath: string }>()
+  if (!name || !repoPath) {
+    return c.json({ error: 'name and repoPath are required' }, 400)
+  }
+  const existing = c.var.db.select().from(workspaces).where(eq(workspaces.name, name)).get()
+  if (existing) {
+    return c.json({ error: 'Workspace with this name already exists' }, 409)
+  }
+  const result = c.var.db.insert(workspaces).values({ name, repoPath }).returning().all()
+  return c.json(result[0], 201)
+})
+
+app.delete('/workspaces/:id', (c) => {
+  const id = Number(c.req.param('id'))
+  c.var.db.delete(workspaces).where(eq(workspaces.id, id)).run()
+  return c.json({ ok: true })
 })
 
 // --- WebSocket: Clone repo ---

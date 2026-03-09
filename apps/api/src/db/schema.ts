@@ -18,6 +18,15 @@ export const users = sqliteTable('users', {
     .$defaultFn(() => new Date()),
 })
 
+export const workspaces = sqliteTable('workspaces', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull().unique(),
+  repoPath: text('repo_path').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+})
+
 export const agents = sqliteTable('agents', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
