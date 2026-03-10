@@ -1,6 +1,11 @@
 # Remote Agents Manager
 
-A web application for managing git repositories with isolated workspaces, tmux-backed terminals, file browsing, and diff visualization. Each workspace maps to a git repo, and threads create git worktrees for isolated branch work.
+A web application for managing coding agents on a remote server. Control and monitor AI coding agents through a browser-based interface with a worktree-based approach where each thread gets its own isolated git branch. Includes built-in git diff viewer, file explorer, and tmux-backed terminals.
+
+## Coming Soon
+
+- PR creation and code push through the UI
+- Per-thread subdomain mapping — each worktree thread gets its own unique subdomain with automatic port forwarding, no need to open multiple localhost ports
 
 ## Requirements
 
@@ -63,13 +68,6 @@ This starts both:
 - Web app at `http://localhost:5173`
 
 7. Open `http://localhost:5173` in your browser and log in with the credentials you created.
-
-## Environment Variables
-
-| Variable | Location | Default | Description |
-|---|---|---|---|
-| `ENCRYPTION_SECRET` | `process.env` | `change-me-encryption-secret` | AES-256-GCM key for encrypting sensitive settings |
-| `VITE_API_URL` | `apps/web/.env` | `http://localhost:3000` | URL of the API server |
 
 ## Available Scripts
 
