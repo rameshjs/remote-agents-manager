@@ -1,159 +1,133 @@
-# Turborepo starter
+# Remote Agents Manager
 
-This Turborepo starter is maintained by the Turborepo core team.
+A web application for managing git repositories with isolated workspaces, tmux-backed terminals, file browsing, and diff visualization. Each workspace maps to a git repo, and threads create git worktrees for isolated branch work.
 
-## Using this example
+## Requirements
 
-Run the following command:
+Before setting up, make sure you have the following installed:
 
-```sh
-npx create-turbo@latest
+- **Bun** (v1.3.9 or later) — JavaScript runtime and package manager
+  - Install: `curl -fsSL https://bun.sh/install | bash`
+- **Git** — version control
+- **tmux** — terminal multiplexer (used for persistent terminal sessions)
+  - Ubuntu/Debian: `sudo apt install tmux`
+  - macOS: `brew install tmux`
+- **Node.js** (v18 or later) — required by some tooling
+- **SQLite3** — ships with Bun, no separate install needed
+
+## Setup
+
+1. Clone the repository:
+
+```bash
+git clone <repo-url>
+cd remote-agents-manager
 ```
 
-## What's inside?
+2. Install dependencies:
 
-This Turborepo includes the following packages/apps:
-
-### Apps and Packages
-
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
-
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo build
+```bash
+bun install
 ```
 
-Without global `turbo`, use your package manager:
+3. Set up environment variables (optional — defaults work for local dev):
 
-```sh
-cd my-turborepo
-npx turbo build
-yarn dlx turbo build
-pnpm exec turbo build
+Create `apps/api/.env`:
+
+```
+JWT_SECRET=your-jwt-secret-here
+ENCRYPTION_SECRET=your-encryption-secret-here
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+Create `apps/web/.env`:
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo build --filter=docs
+```
+VITE_API_URL=http://localhost:3000
 ```
 
-Without global `turbo`:
+4. Initialize the database:
 
-```sh
-npx turbo build --filter=docs
-yarn exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
+```bash
+cd apps/api
+bun run db:push
 ```
 
-### Develop
+5. Create your first user:
 
-To develop all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo dev
+```bash
+cd apps/api
+bun run create-user your@email.com yourpassword
 ```
 
-Without global `turbo`, use your package manager:
+6. Start the development servers:
 
-```sh
-cd my-turborepo
-npx turbo dev
-yarn exec turbo dev
-pnpm exec turbo dev
+```bash
+# From the project root
+bun run dev
 ```
 
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+This starts both:
+- API server at `http://localhost:3000`
+- Web app at `http://localhost:5173`
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+7. Open `http://localhost:5173` in your browser and log in with the credentials you created.
 
-```sh
-turbo dev --filter=web
+## Environment Variables
+
+| Variable | Location | Default | Description |
+|---|---|---|---|
+| `JWT_SECRET` | `apps/api/.env` | `super-secret-change-me` | Secret for signing JWT tokens |
+| `ENCRYPTION_SECRET` | `apps/api/.env` | `change-me-encryption-secret` | Secret for AES-256-GCM encryption of sensitive settings |
+| `VITE_API_URL` | `apps/web/.env` | `http://localhost:3000` | URL of the API server |
+
+## Project Structure
+
+```
+remote-agents-manager/
+  apps/
+    api/            Hono backend API (SQLite + Drizzle ORM)
+    web/            React frontend (Vite + Tailwind + shadcn/ui)
+  packages/         Shared packages (currently empty)
+  .workdir/         Runtime data (gitignored)
+    repos/          Cloned git repositories
+    worktrees/      Git worktrees for threads
 ```
 
-Without global `turbo`:
+## Available Scripts
 
-```sh
-npx turbo dev --filter=web
-yarn exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
+From the project root:
+
+```bash
+bun run dev         # Start API and Web in development mode
+bun run build       # Build all apps
+bun run lint        # Lint all apps
+bun run format      # Format code with Prettier
 ```
 
-### Remote Caching
+From `apps/api`:
 
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo login
+```bash
+bun run dev             # Start API with hot reload
+bun run db:generate     # Generate Drizzle migrations
+bun run db:push         # Push schema changes to SQLite
+bun run db:studio       # Open Drizzle Studio (database GUI)
+bun run create-user     # Create a new user
 ```
 
-Without global `turbo`, use your package manager:
+From `apps/web`:
 
-```sh
-cd my-turborepo
-npx turbo login
-yarn exec turbo login
-pnpm exec turbo login
+```bash
+bun run dev         # Start Vite dev server
+bun run build       # Production build
+bun run preview     # Preview production build
+bun run lint        # ESLint
+bun run format      # Prettier
 ```
 
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
+## How It Works
 
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo link
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo link
-yarn exec turbo link
-pnpm exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+- **Workspaces** point to git repositories (cloned via the UI or existing on disk).
+- **Threads** create git worktrees from a workspace, giving each thread an isolated branch and working directory.
+- **Terminals** are backed by tmux sessions that persist across page reloads and server restarts.
+- **Settings** like GitHub PATs are encrypted at rest using AES-256-GCM.
+- **Authentication** uses JWT tokens with a 24-hour expiry.
