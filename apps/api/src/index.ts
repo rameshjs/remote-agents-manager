@@ -10,7 +10,56 @@ import { resolve } from 'path'
 import { mkdir, readdir, readFile, rm, stat } from 'fs/promises'
 import type { Subprocess } from 'bun'
 
+// --- Encryption helpers (AES-256-GCM) ---
+
+async function deriveKey(secret: string): Promise<CryptoKey> {
+  const enc = new TextEncoder()
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(secret),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveKey']
+  )
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: enc.encode('ram-salt'), iterations: 100000, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  )
+}
+
+async function encryptValue(plaintext: string, secret: string): Promise<string> {
+  const key = await deriveKey(secret)
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const enc = new TextEncoder()
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    enc.encode(plaintext)
+  )
+  const combined = new Uint8Array(iv.length + new Uint8Array(ciphertext).length)
+  combined.set(iv)
+  combined.set(new Uint8Array(ciphertext), iv.length)
+  return btoa(String.fromCharCode(...combined))
+}
+
+async function decryptValue(encoded: string, secret: string): Promise<string> {
+  const key = await deriveKey(secret)
+  const combined = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0))
+  const iv = combined.slice(0, 12)
+  const ciphertext = combined.slice(12)
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    ciphertext
+  )
+  return new TextDecoder().decode(plaintext)
+}
+
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-change-me'
+const ENCRYPTION_SECRET = process.env.ENCRYPTION_SECRET || 'change-me-encryption-secret'
 const WORKDIR = resolve(process.cwd(), '../../.workdir/repos')
 const WORKTREES_DIR = resolve(process.cwd(), '../../.workdir/worktrees')
 
@@ -70,6 +119,10 @@ app.post('/auth/login', async (c) => {
 // --- Protected routes ---
 
 app.use(
+  '/auth/change-password',
+  jwt({ secret: JWT_SECRET, alg: 'HS256' })
+)
+app.use(
   '/agents/*',
   jwt({ secret: JWT_SECRET, alg: 'HS256' })
 )
@@ -99,13 +152,44 @@ app.get('/me', (c) => {
   return c.json({ id: payload.sub, email: payload.email })
 })
 
+app.post('/auth/change-password', async (c) => {
+  const payload = c.get('jwtPayload')
+  const { currentPassword, newPassword } = await c.req.json<{
+    currentPassword: string
+    newPassword: string
+  }>()
+
+  if (!currentPassword || !newPassword) {
+    return c.json({ error: 'Current password and new password are required' }, 400)
+  }
+
+  if (newPassword.length < 6) {
+    return c.json({ error: 'New password must be at least 6 characters' }, 400)
+  }
+
+  const user = c.var.db.select().from(users).where(eq(users.id, payload.sub)).get()
+  if (!user) {
+    return c.json({ error: 'User not found' }, 404)
+  }
+
+  const valid = await Bun.password.verify(currentPassword, user.passwordHash)
+  if (!valid) {
+    return c.json({ error: 'Current password is incorrect' }, 401)
+  }
+
+  const newHash = await Bun.password.hash(newPassword)
+  c.var.db.update(users).set({ passwordHash: newHash }).where(eq(users.id, payload.sub)).run()
+
+  return c.json({ ok: true })
+})
+
 app.get('/', (c) => {
   return c.text('Hello Hono!')
 })
 
 // --- Settings routes ---
 
-app.get('/settings/:key', (c) => {
+app.get('/settings/:key', async (c) => {
   const key = c.req.param('key')
   const result = c.var.db
     .select()
@@ -113,12 +197,30 @@ app.get('/settings/:key', (c) => {
     .where(eq(settings.key, key))
     .get()
   if (!result) return c.json({ key, value: null })
+
+  // Decrypt github_pat using env secret
+  if (key === 'github_pat' && result.value) {
+    try {
+      const decrypted = await decryptValue(result.value, ENCRYPTION_SECRET)
+      return c.json({ key: result.key, value: decrypted })
+    } catch {
+      return c.json({ key: result.key, value: null, error: 'Decryption failed' })
+    }
+  }
+
   return c.json({ key: result.key, value: result.value })
 })
 
 app.put('/settings/:key', async (c) => {
   const key = c.req.param('key')
   const { value } = await c.req.json<{ value: string }>()
+
+  let storeValue = value
+
+  // Encrypt github_pat using env secret
+  if (key === 'github_pat' && value) {
+    storeValue = await encryptValue(value, ENCRYPTION_SECRET)
+  }
 
   const existing = c.var.db
     .select()
@@ -129,13 +231,13 @@ app.put('/settings/:key', async (c) => {
   if (existing) {
     c.var.db
       .update(settings)
-      .set({ value, updatedAt: new Date() })
+      .set({ value: storeValue, updatedAt: new Date() })
       .where(eq(settings.key, key))
       .run()
   } else {
     c.var.db
       .insert(settings)
-      .values({ key, value })
+      .values({ key, value: storeValue })
       .run()
   }
 

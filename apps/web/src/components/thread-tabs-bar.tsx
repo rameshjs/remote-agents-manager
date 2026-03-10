@@ -1,7 +1,9 @@
+import { useState } from "react"
 import { useThreadTabs, type TabThread } from "@/lib/thread-tabs"
-import { RiCloseLine, RiLoader4Line, RiCheckboxCircleLine, RiErrorWarningLine } from "@remixicon/react"
+import { RiCloseLine, RiLoader4Line, RiCheckboxCircleLine, RiErrorWarningLine, RiGitRepositoryLine } from "@remixicon/react"
 import { cn } from "@/lib/utils"
 import type { ThreadStatus } from "@/api/workspaces"
+import { AddFromRepoDialog } from "@/components/add-from-repo-dialog"
 
 function StatusIndicator({ status }: { status: ThreadStatus }) {
   switch (status) {
@@ -47,14 +49,24 @@ function TabItem({ tab, isActive }: { tab: TabThread; isActive: boolean }) {
 
 export function ThreadTabsBar() {
   const { tabs, activeTabId } = useThreadTabs()
-
-  if (tabs.length === 0) return null
+  const [cloneOpen, setCloneOpen] = useState(false)
 
   return (
-    <div className="flex items-end overflow-x-auto border-b bg-background">
-      {tabs.map((tab) => (
-        <TabItem key={tab.id} tab={tab} isActive={tab.id === activeTabId} />
-      ))}
+    <div className="flex items-end border-b bg-background">
+      <div className="flex flex-1 items-end overflow-x-auto">
+        {tabs.map((tab) => (
+          <TabItem key={tab.id} tab={tab} isActive={tab.id === activeTabId} />
+        ))}
+      </div>
+      <button
+        onClick={() => setCloneOpen(true)}
+        className="flex shrink-0 items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        title="Clone Repository"
+      >
+        <RiGitRepositoryLine className="size-3.5" />
+        <span>Clone</span>
+      </button>
+      <AddFromRepoDialog open={cloneOpen} onOpenChange={setCloneOpen} />
     </div>
   )
 }

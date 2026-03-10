@@ -1,8 +1,8 @@
-import * as React from "react"
+import { useState } from "react"
 
-import { NavSecondary } from "@/components/nav-secondary"
 import { NavUser } from "@/components/nav-user"
 import { NavWorkspaces } from "@/components/nav-workspaces"
+import { SettingsModal } from "@/components/settings-modal"
 import {
   Sidebar,
   SidebarContent,
@@ -11,35 +11,14 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarGroup,
+  SidebarGroupContent,
 } from "@/components/ui/sidebar"
-import { RiSettingsLine, RiQuestionLine, RiSearchLine, RiCommandLine } from "@remixicon/react"
-
-const data = {
-  user: {
-    name: "shadcn",
-    email: "m@example.com",
-    avatar: "/avatars/shadcn.jpg",
-  },
-  navSecondary: [
-    {
-      title: "Settings",
-      url: "#",
-      icon: <RiSettingsLine />,
-    },
-    {
-      title: "Get Help",
-      url: "#",
-      icon: <RiQuestionLine />,
-    },
-    {
-      title: "Search",
-      url: "#",
-      icon: <RiSearchLine />,
-    },
-  ],
-}
+import { RiSettingsLine, RiCommandLine } from "@remixicon/react"
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
   return (
     <Sidebar collapsible="offcanvas" {...props}>
       <SidebarHeader>
@@ -51,7 +30,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             >
               <a href="#">
                 <RiCommandLine className="size-5!" />
-                <span className="text-base font-semibold">Acme Inc.</span>
+                <span className="text-base font-semibold">Remote Agents</span>
               </a>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -59,11 +38,24 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavWorkspaces />
-        <NavSecondary items={data.navSecondary} className="mt-auto" />
+        <SidebarGroup className="mt-auto">
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={() => setSettingsOpen(true)}>
+                  <RiSettingsLine />
+                  <span>Settings</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={data.user} />
+        <NavUser />
       </SidebarFooter>
+
+      <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
     </Sidebar>
   )
 }
