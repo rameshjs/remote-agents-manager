@@ -38,34 +38,21 @@ packages/       # Shared packages (currently empty)
 
 ## Environment Variables
 
-### API (`apps/api`)
-- `JWT_SECRET` — JWT signing secret (default: `super-secret-change-me`)
 - `ENCRYPTION_SECRET` — AES-256-GCM key for encrypting settings like GitHub PATs (default: `change-me-encryption-secret`)
-
-### Web (`apps/web`)
-- `VITE_API_URL` — API base URL (default: `http://localhost:3000`)
+- `VITE_API_URL` — API base URL in `apps/web/.env` (default: `http://localhost:3000`)
 
 ## Commands
 
+All commands run from the project root:
+
 ```bash
-# Install dependencies (from root)
-bun install
-
-# Run dev (API + Web)
-bun run dev
-
-# Database
-cd apps/api
-bun run db:generate    # Generate migrations
-bun run db:push        # Push schema to DB (creates sqlite.db)
-bun run db:studio      # Open Drizzle Studio
-
-# Create a user
-cd apps/api
-bun run create-user <email> <password>
-
-# Build
-bun run build
+bun install                              # Install dependencies
+bun run dev                              # Start API + Web in dev mode
+bun run build                            # Build all apps
+bun run db:generate                      # Generate Drizzle migrations
+bun run db:push                          # Push schema to DB (creates sqlite.db)
+bun run db:studio                        # Open Drizzle Studio
+bun run create-user <email> <password>   # Create a user
 ```
 
 ## Database
@@ -74,7 +61,7 @@ SQLite file at `apps/api/sqlite.db`. Schema managed by Drizzle ORM.
 
 Tables: `users`, `workspaces`, `threads`, `settings`, `agents`
 
-Run `bun run db:push` from `apps/api` to initialize.
+Run `bun run db:push` to initialize.
 
 ## API Routes
 

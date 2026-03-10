@@ -32,37 +32,29 @@ bun install
 
 3. Set up environment variables (optional — defaults work for local dev):
 
-Create `apps/api/.env`:
-
-```
-JWT_SECRET=your-jwt-secret-here
-ENCRYPTION_SECRET=your-encryption-secret-here
-```
-
-Create `apps/web/.env`:
+Create `apps/web/.env` if you need a custom API URL:
 
 ```
 VITE_API_URL=http://localhost:3000
 ```
 
+The API reads `ENCRYPTION_SECRET` from `process.env` for encrypting sensitive settings (like GitHub PATs). The default works for local dev but should be changed in production.
+
 4. Initialize the database:
 
 ```bash
-cd apps/api
 bun run db:push
 ```
 
 5. Create your first user:
 
 ```bash
-cd apps/api
 bun run create-user your@email.com yourpassword
 ```
 
 6. Start the development servers:
 
 ```bash
-# From the project root
 bun run dev
 ```
 
@@ -76,52 +68,22 @@ This starts both:
 
 | Variable | Location | Default | Description |
 |---|---|---|---|
-| `JWT_SECRET` | `apps/api/.env` | `super-secret-change-me` | Secret for signing JWT tokens |
-| `ENCRYPTION_SECRET` | `apps/api/.env` | `change-me-encryption-secret` | Secret for AES-256-GCM encryption of sensitive settings |
+| `ENCRYPTION_SECRET` | `process.env` | `change-me-encryption-secret` | AES-256-GCM key for encrypting sensitive settings |
 | `VITE_API_URL` | `apps/web/.env` | `http://localhost:3000` | URL of the API server |
-
-## Project Structure
-
-```
-remote-agents-manager/
-  apps/
-    api/            Hono backend API (SQLite + Drizzle ORM)
-    web/            React frontend (Vite + Tailwind + shadcn/ui)
-  packages/         Shared packages (currently empty)
-  .workdir/         Runtime data (gitignored)
-    repos/          Cloned git repositories
-    worktrees/      Git worktrees for threads
-```
 
 ## Available Scripts
 
-From the project root:
+All commands run from the project root:
 
 ```bash
-bun run dev         # Start API and Web in development mode
-bun run build       # Build all apps
-bun run lint        # Lint all apps
-bun run format      # Format code with Prettier
-```
-
-From `apps/api`:
-
-```bash
-bun run dev             # Start API with hot reload
-bun run db:generate     # Generate Drizzle migrations
-bun run db:push         # Push schema changes to SQLite
-bun run db:studio       # Open Drizzle Studio (database GUI)
-bun run create-user     # Create a new user
-```
-
-From `apps/web`:
-
-```bash
-bun run dev         # Start Vite dev server
-bun run build       # Production build
-bun run preview     # Preview production build
-bun run lint        # ESLint
-bun run format      # Prettier
+bun run dev                              # Start API and Web in dev mode
+bun run build                            # Build all apps
+bun run lint                             # Lint all apps
+bun run format                           # Format code with Prettier
+bun run db:generate                      # Generate Drizzle migrations
+bun run db:push                          # Push schema changes to SQLite
+bun run db:studio                        # Open Drizzle Studio (database GUI)
+bun run create-user <email> <password>   # Create a new user
 ```
 
 ## How It Works
